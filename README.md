@@ -15,6 +15,78 @@ All workload parameters are configurable via YAML and selected CLI overrides.
 
 ---
 
+## Results gallery
+
+The charts below were generated from the full default run
+(`events=1,000,000`, `keyspace=1,000,000`, `capacity_points=1001`,
+`seed=42`). Reproduce with `make run`.
+
+### Forward MRC contact sheet (capacity → miss ratio)
+
+![Forward MRC contact sheet](docs/charts/forward_contact_sheet.png)
+
+### Inverse MRC contact sheet (target miss → required capacity)
+
+![Inverse MRC contact sheet](docs/charts/inverse_contact_sheet.png)
+
+### Per-workload curves
+
+Each workload shows its forward MRC on the left (DRAM % vs miss %) and
+its inverse MRC on the right (target miss % vs required DRAM %). Blue
+is object/request miss; red is byte miss. The gap between the two
+lines is the **object-vs-byte divergence** induced by the deterministic
+heavy-tailed value-size map.
+
+#### `uniform_random` — no-locality baseline
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/forward_uniform_random.png) | ![](docs/charts/inverse_uniform_random.png) |
+
+#### `moving_hot_window` — LRU-friendly recency locality
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/forward_moving_hot_window.png) | ![](docs/charts/inverse_moving_hot_window.png) |
+
+#### `stable_zipfian_hot_set` — stable popularity distribution
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/forward_stable_zipfian_hot_set.png) | ![](docs/charts/inverse_stable_zipfian_hot_set.png) |
+
+#### `stable_hot_set_plus_scans` — scan pollution / anti-LRU workload
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/forward_stable_hot_set_plus_scans.png) | ![](docs/charts/inverse_stable_hot_set_plus_scans.png) |
+
+#### `rotating_hot_sets` — phase changes / hot-set adaptation
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/forward_rotating_hot_sets.png) | ![](docs/charts/inverse_rotating_hot_sets.png) |
+
+#### `hot_core_noisy_tail` — stable hot core plus tail noise
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/forward_hot_core_noisy_tail.png) | ![](docs/charts/inverse_hot_core_noisy_tail.png) |
+
+#### `size_skewed` — object-vs-byte divergence demo
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/forward_size_skewed.png) | ![](docs/charts/inverse_size_skewed.png) |
+
+#### `read_churn_hot_region` — rapidly shifting active region
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/forward_read_churn_hot_region.png) | ![](docs/charts/inverse_read_churn_hot_region.png) |
+
+---
+
 ## Why warmed/cyclic MRC?
 
 A "cold" LRU MRC double-counts compulsory (first-touch) misses that come from
