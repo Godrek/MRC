@@ -7,9 +7,12 @@ It can:
 
 1. Generate synthetic GET-only access traces for **8 workload shapes**.
 2. Compute exact warmed/cyclic LRU MRCs.
-3. Output **object/request miss** curves and **byte miss** curves.
-4. Output **inverse MRC curves** (target miss ratio → required DRAM capacity).
-5. Emit per-workload PNGs and contact-sheet PNGs.
+3. Compute warmed/cyclic **true LFU** MRCs (per-capacity replay; global
+   frequency counters with LRU tie-break).
+4. Output **object/request miss** curves and **byte miss** curves.
+5. Output **inverse MRC curves** (target miss ratio → required DRAM capacity).
+6. Emit per-workload PNGs, contact-sheet PNGs, and **LRU-vs-LFU comparison**
+   charts.
 
 All workload parameters are configurable via YAML and selected CLI overrides.
 
@@ -141,6 +144,52 @@ reachable (at 100% of unique value bytes).
 
 ---
 
+## True LFU policy simulation
+
+Two policies are computed in this harness, **using two different methods**:
+
+- **LRU** is computed via a single warmed/cyclic byte stack-distance pass
+  (Fenwick tree). One pass produces curves for every capacity point.
+- **True LFU** is computed by **per-capacity full trace replay**. Each
+  capacity gets its own simulation because the eviction choice depends on
+  the live resident set under that capacity. Stack-distance does not
+  generalize to LFU.
+
+The LFU policy implemented here is intentionally **idealized**:
+
+- Global frequency counters that **never decay**.
+- LRU tie-break among resident keys with equal frequency.
+- No approximate Morris counters, no randomized sampling, no admission
+  threshold, no TTL, no writes, no decay.
+- Capacity is resident DRAM value bytes; SSD/dataset is assumed to hold
+  every value (this is a **spill/residency** simulator, not a
+  cache-existence simulator).
+- Same warmed/cyclic invariant as LRU: replay each trace twice; measure
+  only the second pass; at 100% capacity both miss ratios are exactly 0.
+
+This is **not** Valkey's approximate LFU. The point is to compare a
+recency-based ideal (LRU) against a frequency-based ideal (true LFU) so
+you can see when frequency wins, when recency wins, and when one becomes
+sticky under phase changes (true LFU has no decay, so an old hot set can
+shadow a new one).
+
+### Performance note
+
+True LFU per-capacity replay is significantly slower than the LRU
+stack-distance pass. With the default config (1M events × 1001 capacity
+points × 8 workloads) it is **not** practical to run unmodified. To keep
+LFU experiments tractable, use one or more of:
+
+- `--capacity-points` with a smaller value (e.g. 51 or 101 instead of 1001).
+- `--workload <name1>,<name2>` on `compute-lfu` to filter to a subset.
+- A smaller `--events` / `--keyspace` for the trace generation step.
+
+The simulator is numba-jitted with O(resident_count) eviction scans —
+intentionally simple for experiment correctness, not production
+performance.
+
+---
+
 ## Repository layout
 
 ```
@@ -215,7 +264,7 @@ make run
 This runs the pipeline with the full default config (1M events, 1M keyspace,
 1001 capacity points) and writes everything under `runs/default/`.
 
-The CLI also exposes the four subcommands individually:
+The CLI also exposes each subcommand individually:
 
 ```bash
 python -m valkey_tiering_mrc generate-traces \
@@ -227,14 +276,28 @@ python -m valkey_tiering_mrc compute-lru \
     --out results/lru \
     --capacity-points 1001
 
+python -m valkey_tiering_mrc compute-lfu \
+    --traces data/traces \
+    --out results/lfu \
+    --capacity-points 51 \
+    --workload uniform_random,stable_zipfian_hot_set
+
 python -m valkey_tiering_mrc plot \
     --curves results/lru/lru_warmed_object_and_byte_mrc_curves.csv \
     --inverse results/lru/lru_warmed_inverse_mrc_curves.csv \
     --out results/lru/plots
 
+python -m valkey_tiering_mrc compare-policies \
+    --lru-curves results/lru/lru_warmed_object_and_byte_mrc_curves.csv \
+    --lfu-curves results/lfu/true_lfu_warmed_object_and_byte_mrc_curves.csv \
+    --lru-inverse results/lru/lru_warmed_inverse_mrc_curves.csv \
+    --lfu-inverse results/lfu/true_lfu_warmed_inverse_mrc_curves.csv \
+    --out results/compare
+
 python -m valkey_tiering_mrc run-all \
     --config examples/default_config.yaml \
-    --out runs/default
+    --out runs/default \
+    --policies lru,true_lfu
 ```
 
 CLI overrides (apply to `generate-traces` and `run-all`):
@@ -243,6 +306,16 @@ CLI overrides (apply to `generate-traces` and `run-all`):
 - `--keyspace <N>`
 - `--seed <N>`
 - `--capacity-points <N>`
+
+`run-all --policies` selects the policies to run (subset of `lru,true_lfu`,
+default `lru`). When both are present, comparison plots are emitted under
+`<out>/compare/`.
+
+`compute-lfu --workload <name>[,<name>...]` filters which trace files to
+simulate, useful for keeping LFU runs tractable.
+
+There are also `make compute-lfu` and `make compare` targets that wire up
+the same commands against `data/traces` / `results/lru` / `results/lfu`.
 
 ---
 
@@ -324,11 +397,16 @@ Tests cover:
 ## Current limitations
 
 - **GET-only** traces (no SET / DEL / EXPIRE / RESP shape).
-- **Exact LRU only** — no LFU, no probabilistic eviction, no SLRU/2Q/ARC.
-- **No promotion / spill / SSD-pressure** modeling. The MRC reflects DRAM
-  capacity only; tiering effects are not simulated.
+- **LRU and true LFU only** — no probabilistic eviction, no SLRU/2Q/ARC,
+  no Valkey-style approximate LFU yet.
+- **No decay** in the LFU implementation. Frequency counters grow forever,
+  so a workload with phase changes can leave true LFU sticky on stale hot
+  sets.
+- **No promotion / spill / SSD-pressure** metrics. The MRC reflects DRAM
+  capacity and miss ratio only; tiering effects are not simulated.
 - **No TTL / write / invalidation** modeling.
 - **No multi-tenancy / class-of-service** modeling.
 
-These are explicit non-goals for v0.1 — the harness is intentionally a
-clean reference for warmed/cyclic exact-LRU MRCs.
+These are explicit non-goals for v0.x — the harness is intentionally a
+clean reference for warmed/cyclic exact-LRU MRCs and idealized true-LFU
+MRCs that can be compared apples-to-apples.

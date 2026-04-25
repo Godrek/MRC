@@ -1,4 +1,4 @@
-"""End-to-end pipeline: traces -> LRU MRCs -> CSVs -> plots."""
+"""End-to-end pipeline: traces -> LRU/LFU MRCs -> CSVs -> plots."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import lru, plot, traces
+from . import lru, plot, simulate, traces
 from .config import HarnessConfig
 
 
@@ -119,33 +119,87 @@ def compute_lru_for_traces(
 def run_all(
     cfg: HarnessConfig,
     out_dir: str | Path,
+    policies: list[str] | None = None,
     progress: bool = True,
 ) -> dict:
-    """Run the full pipeline: generate traces, compute MRCs, and plot."""
-    out_dir = Path(out_dir)
-    traces_dir = out_dir / "traces"
-    results_dir = out_dir / "lru"
-    plots_dir = results_dir / "plots"
+    """Run the full pipeline: generate traces, compute MRCs, and plot.
 
+    `policies` selects which policies to run (subset of {"lru","true_lfu"}).
+    Default is just LRU. When both are present, comparison plots are emitted
+    under <out_dir>/compare/.
+    """
+    out_dir = Path(out_dir)
+    if not policies:
+        policies = ["lru"]
+    requested = set(policies)
+    unknown = requested - {"lru", "true_lfu"}
+    if unknown:
+        raise ValueError(f"unknown policies: {sorted(unknown)}")
+
+    traces_dir = out_dir / "traces"
     if progress:
         print(f"==> generate-traces -> {traces_dir}")
     trace_paths = traces.generate_all_traces(cfg, traces_dir, progress=progress)
 
-    if progress:
-        print(f"==> compute-lru -> {results_dir}")
-    forward_csv, inverse_csv = compute_lru_for_traces(
-        trace_paths,
-        results_dir,
-        capacity_points=cfg.global_.capacity_points,
-        progress=progress,
-    )
+    result: dict = {"trace_paths": trace_paths}
 
-    if progress:
-        print(f"==> plot -> {plots_dir}")
-    plots = plot.plot_all(forward_csv, inverse_csv, plots_dir)
-    return {
-        "trace_paths": trace_paths,
-        "forward_csv": forward_csv,
-        "inverse_csv": inverse_csv,
-        "plots": plots,
-    }
+    # ---- LRU --------------------------------------------------------------
+    lru_forward_csv = lru_inverse_csv = None
+    if "lru" in requested:
+        lru_dir = out_dir / "lru"
+        plots_dir = lru_dir / "plots"
+        if progress:
+            print(f"==> compute-lru -> {lru_dir}")
+        lru_forward_csv, lru_inverse_csv = compute_lru_for_traces(
+            trace_paths,
+            lru_dir,
+            capacity_points=cfg.global_.capacity_points,
+            progress=progress,
+        )
+        if progress:
+            print(f"==> plot LRU -> {plots_dir}")
+        lru_plots = plot.plot_all(lru_forward_csv, lru_inverse_csv, plots_dir)
+        result["lru_forward_csv"] = lru_forward_csv
+        result["lru_inverse_csv"] = lru_inverse_csv
+        result["lru_plots"] = lru_plots
+
+    # ---- true LFU --------------------------------------------------------
+    lfu_forward_csv = lfu_inverse_csv = None
+    if "true_lfu" in requested:
+        lfu_dir = out_dir / "lfu"
+        plots_dir = lfu_dir / "plots"
+        if progress:
+            print(f"==> compute-lfu -> {lfu_dir}")
+        lfu_forward_csv, lfu_inverse_csv = simulate.simulate_true_lfu_for_traces(
+            trace_paths,
+            lfu_dir,
+            capacity_points=cfg.global_.capacity_points,
+            progress=progress,
+        )
+        if progress:
+            print(f"==> plot true LFU -> {plots_dir}")
+        lfu_plots = plot.plot_all(lfu_forward_csv, lfu_inverse_csv, plots_dir)
+        # Also publish a dedicated inverse contact sheet under the spec name.
+        plot.plot_policy_inverse_sheet(
+            lfu_inverse_csv,
+            plots_dir,
+            sheet_name="true_lfu_warmed_inverse_contact_sheet.png",
+        )
+        result["lfu_forward_csv"] = lfu_forward_csv
+        result["lfu_inverse_csv"] = lfu_inverse_csv
+        result["lfu_plots"] = lfu_plots
+
+    # ---- comparison ------------------------------------------------------
+    if lru_forward_csv is not None and lfu_forward_csv is not None:
+        compare_dir = out_dir / "compare"
+        if progress:
+            print(f"==> compare-policies -> {compare_dir}")
+        result["compare_plots"] = plot.plot_compare_policies(
+            lru_csv=lru_forward_csv,
+            lfu_csv=lfu_forward_csv,
+            out_dir=compare_dir,
+            lru_inverse_csv=lru_inverse_csv,
+            lfu_inverse_csv=lfu_inverse_csv,
+        )
+
+    return result
