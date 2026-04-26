@@ -18,9 +18,9 @@ All workload parameters are configurable via YAML and selected CLI overrides.
 
 ---
 
-## Results gallery
+## LRU results gallery
 
-The charts below were generated from the full default run
+The charts below were generated from the full default LRU run
 (`events=1,000,000`, `keyspace=1,000,000`, `capacity_points=1001`,
 `seed=42`). Reproduce with `make run`.
 
@@ -87,6 +87,126 @@ heavy-tailed value-size map.
 | Forward | Inverse |
 | --- | --- |
 | ![](docs/charts/forward_read_churn_hot_region.png) | ![](docs/charts/inverse_read_churn_hot_region.png) |
+
+---
+
+## True LFU results gallery
+
+The charts below were generated from a warmed/cyclic true-LFU run at
+`events=100,000`, `keyspace=100,000`, `capacity_points=51`, `seed=42`.
+Same trace shapes and value-size mapping as the LRU run above; smaller
+scale because true LFU does a **full per-capacity replay** instead of a
+single stack-distance pass. Reproduce with:
+
+```bash
+python -m valkey_tiering_mrc run-all \
+    --config examples/default_config.yaml \
+    --out runs/lfu_demo \
+    --events 100000 --keyspace 100000 --capacity-points 51 \
+    --policies lru,true_lfu --seed 42
+```
+
+### Forward MRC contact sheet (capacity → miss ratio)
+
+![Forward LFU MRC contact sheet](docs/charts/lfu/forward_contact_sheet.png)
+
+### Inverse MRC contact sheet (target miss → required capacity)
+
+![Inverse LFU MRC contact sheet](docs/charts/lfu/inverse_contact_sheet.png)
+
+### Per-workload curves
+
+Each workload shows its forward LFU MRC on the left and its inverse LFU
+MRC on the right. Blue is object/request miss; red is byte miss.
+
+#### `uniform_random` — no-locality baseline
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/lfu/forward_uniform_random.png) | ![](docs/charts/lfu/inverse_uniform_random.png) |
+
+#### `moving_hot_window` — LRU-friendly recency locality
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/lfu/forward_moving_hot_window.png) | ![](docs/charts/lfu/inverse_moving_hot_window.png) |
+
+#### `stable_zipfian_hot_set` — stable popularity distribution
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/lfu/forward_stable_zipfian_hot_set.png) | ![](docs/charts/lfu/inverse_stable_zipfian_hot_set.png) |
+
+#### `stable_hot_set_plus_scans` — scan pollution / anti-LRU workload
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/lfu/forward_stable_hot_set_plus_scans.png) | ![](docs/charts/lfu/inverse_stable_hot_set_plus_scans.png) |
+
+#### `rotating_hot_sets` — phase changes / hot-set adaptation
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/lfu/forward_rotating_hot_sets.png) | ![](docs/charts/lfu/inverse_rotating_hot_sets.png) |
+
+#### `hot_core_noisy_tail` — stable hot core plus tail noise
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/lfu/forward_hot_core_noisy_tail.png) | ![](docs/charts/lfu/inverse_hot_core_noisy_tail.png) |
+
+#### `size_skewed` — object-vs-byte divergence demo
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/lfu/forward_size_skewed.png) | ![](docs/charts/lfu/inverse_size_skewed.png) |
+
+#### `read_churn_hot_region` — rapidly shifting active region
+
+| Forward | Inverse |
+| --- | --- |
+| ![](docs/charts/lfu/forward_read_churn_hot_region.png) | ![](docs/charts/lfu/inverse_read_churn_hot_region.png) |
+
+---
+
+## LRU vs true LFU comparison
+
+The charts below come from the same run as the LFU gallery above (LRU
+recomputed at the same scale so the two policies share trace inputs):
+`events=100,000`, `keyspace=100,000`, `capacity_points=51`, `seed=42`.
+Blue is LRU; green is true LFU.
+
+### Object/request miss — LRU vs true LFU
+
+![LRU vs true LFU object miss](docs/charts/compare/lru_vs_true_lfu_object_contact_sheet.png)
+
+### Byte miss — LRU vs true LFU
+
+![LRU vs true LFU byte miss](docs/charts/compare/lru_vs_true_lfu_byte_contact_sheet.png)
+
+### Combined per-workload (object + byte for both policies)
+
+![LRU vs true LFU combined](docs/charts/compare/lru_vs_true_lfu_combined_contact_sheet.png)
+
+### Inverse comparison: required capacity for object miss target
+
+![LRU vs true LFU inverse object](docs/charts/compare/lru_vs_true_lfu_inverse_object_contact_sheet.png)
+
+### Inverse comparison: required capacity for byte miss target
+
+![LRU vs true LFU inverse byte](docs/charts/compare/lru_vs_true_lfu_inverse_byte_contact_sheet.png)
+
+What to look for:
+
+- **Workloads where LFU wins** (lower miss at the same capacity): stable
+  popularity distributions and the hot-core-plus-noisy-tail shape — both
+  reward a frequency-aware policy that doesn't get evicted by tail traffic.
+- **Workloads where LRU wins or matches**: pure-recency shapes
+  (`moving_hot_window`, `read_churn_hot_region`) and the no-locality
+  `uniform_random` baseline. With no decay, LFU can be sticky on a stale
+  hot set when popularity actually drifts.
+- **Both policies** converge to **0 miss at 100% capacity** — the
+  warmed/cyclic invariant.
 
 ---
 
