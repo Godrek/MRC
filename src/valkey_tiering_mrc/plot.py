@@ -19,6 +19,15 @@ def _set_full_axes(ax) -> None:
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
+def _mode_title(df: pd.DataFrame) -> str:
+    mode = str(df.get("measurement_mode", pd.Series(["unknown"])) .iloc[0]) if len(df) else "unknown"
+    if mode == "exclude_first_touch":
+        return "First-touch-excluded"
+    if mode == "cyclic":
+        return "Cyclic"
+    return mode
+
+
 def plot_forward_mrc(
     df: pd.DataFrame, workload: str, out_path: Path
 ) -> Path:
@@ -32,7 +41,7 @@ def plot_forward_mrc(
     ax.plot(cap_pct, byt, label="byte miss", linewidth=2, color="#d62728")
     ax.set_xlabel("DRAM capacity (% of unique value bytes)")
     ax.set_ylabel("miss ratio (%)")
-    ax.set_title(f"Forward MRC — {workload}")
+    ax.set_title(f"{_mode_title(sub)} {str(sub['policy'].iloc[0]).split('_')[0].upper()} MRC — {workload}")
     ax.legend(loc="upper right")
     _set_full_axes(ax)
     fig.tight_layout()
@@ -55,7 +64,7 @@ def plot_inverse_mrc(
     ax.plot(targets, req_byte, label="byte miss target", linewidth=2, color="#d62728")
     ax.set_xlabel("target miss ratio (%)")
     ax.set_ylabel("required DRAM capacity (% of unique value bytes)")
-    ax.set_title(f"Inverse MRC — {workload}")
+    ax.set_title(f"{_mode_title(sub)} inverse MRC — {workload}")
     ax.legend(loc="upper right")
     _set_full_axes(ax)
     fig.tight_layout()

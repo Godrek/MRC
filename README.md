@@ -1,14 +1,13 @@
 # valkey-tiering-mrc
 
 A reproducible Python harness for **synthetic miss-ratio-curve (MRC)** experiments
-on Valkey-style cache workloads, computed under exact warmed/cyclic LRU.
+on Valkey-style cache workloads, computed under exact first-touch-excluded LRU (default).
 
 It can:
 
 1. Generate synthetic GET-only access traces for **8 workload shapes**.
-2. Compute exact warmed/cyclic LRU MRCs.
-3. Compute warmed/cyclic **true LFU** MRCs (per-capacity replay; global
-   frequency counters with LRU tie-break).
+2. Compute exact LRU MRCs with first-touch exclusion (default) or cyclic mode.
+3. Compute **true LFU** MRCs (single-pass first-touch-excluded default; optional cyclic mode).
 4. Output **object/request miss** curves and **byte miss** curves.
 5. Output **inverse MRC curves** (target miss ratio → required DRAM capacity).
 6. Emit per-workload PNGs, contact-sheet PNGs, and **LRU-vs-LFU comparison**
@@ -103,7 +102,7 @@ python -m valkey_tiering_mrc run-all \
     --config examples/default_config.yaml \
     --out runs/lfu_demo \
     --events 100000 --keyspace 100000 --capacity-points 51 \
-    --policies lru,true_lfu --seed 42
+    --policies lru,true_lfu --measurement-mode exclude_first_touch --seed 42
 ```
 
 ### Forward MRC contact sheet (capacity → miss ratio)
@@ -210,25 +209,27 @@ What to look for:
 
 ---
 
-## Why warmed/cyclic MRC?
+## Why first-touch-excluded measurement?
 
-A "cold" LRU MRC double-counts compulsory (first-touch) misses that come from
-the trace simply not having seen a key yet. That makes the curve look worse
-than the steady-state cache ever would, and it does not converge to 0 misses
-even at infinite capacity within a finite trace.
+Earlier versions used warmed/cyclic replay (two passes, measure second pass).
+That removes cold-start misses, but for true LFU it leaks exact future access
+frequencies via the first pass and can overstate LFU quality.
 
-This harness uses a **warmed/cyclic** model instead:
+The default mode is now **exclude_first_touch**:
 
-- Replay the trace twice back-to-back.
-- Only measure accesses in the second pass.
-- Every key referenced in the second pass has already been inserted during
-  the first pass.
+- Replay the trace once.
+- On a key's first appearance, treat it as an unmeasured populate/write event.
+- First-touch events update policy state and residency but are excluded from
+  object/byte miss numerators and denominators.
+- Only repeated accesses are measured.
 
 Consequences:
 
-- At `capacity = 100% of unique value bytes`, both object miss and byte miss
-  are exactly **0**. This is enforced as a smoke-test invariant.
-- Curves reflect steady-state hit rate, not transient warmup.
+- At `capacity = 100% of unique value bytes`, measured object and byte miss are
+  **0** whenever measured accesses exist.
+- All-unique traces have `measured_accesses = 0`, so miss ratios are `NaN`.
+- This better matches Valkey data-tiering intuition where first appearance is
+  usually a SET/admission, not a GET miss.
 
 ---
 
