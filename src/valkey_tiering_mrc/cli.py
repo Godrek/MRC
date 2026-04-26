@@ -31,6 +31,14 @@ def _parse_policies(s: str) -> list[str]:
     return items
 
 
+
+
+def _parse_measurement_mode(s: str) -> str:
+    valid = {"exclude_first_touch", "cyclic"}
+    if s not in valid:
+        raise argparse.ArgumentTypeError(f"unknown measurement mode: {s} (valid: {sorted(valid)})")
+    return s
+
 def _parse_workloads(s: str | None) -> list[str] | None:
     if not s:
         return None
@@ -40,7 +48,7 @@ def _parse_workloads(s: str | None) -> list[str] | None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="valkey-tiering-mrc",
-        description="Synthetic MRC experiment harness (warmed/cyclic exact LRU + true LFU).",
+        description="Synthetic MRC experiment harness (exclude-first-touch LRU + true LFU).",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -59,6 +67,7 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Directory containing trace CSVs.")
     p_lru.add_argument("--out", required=True, type=Path)
     p_lru.add_argument("--capacity-points", type=int, default=1001)
+    p_lru.add_argument("--measurement-mode", type=_parse_measurement_mode, default="exclude_first_touch")
 
     # compute-lfu
     p_lfu = sub.add_parser(
@@ -69,6 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Directory containing trace CSVs.")
     p_lfu.add_argument("--out", required=True, type=Path)
     p_lfu.add_argument("--capacity-points", type=int, default=1001)
+    p_lfu.add_argument("--measurement-mode", type=_parse_measurement_mode, default="exclude_first_touch")
     p_lfu.add_argument(
         "--workload", type=str, default=None,
         help="Comma-separated workload names to filter (default: all in dir).",
@@ -112,6 +122,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Comma-separated subset of {lru,true_lfu}. Default: lru",
     )
     _add_overrides(p_run)
+    p_run.add_argument("--measurement-mode", type=_parse_measurement_mode, default="exclude_first_touch")
 
     return parser
 
@@ -140,6 +151,7 @@ def cmd_compute_lru(args: argparse.Namespace) -> int:
         trace_paths,
         Path(args.out),
         capacity_points=args.capacity_points,
+        measurement_mode=args.measurement_mode,
         progress=True,
     )
     return 0
@@ -162,6 +174,7 @@ def cmd_compute_lfu(args: argparse.Namespace) -> int:
         trace_paths,
         Path(args.out),
         capacity_points=args.capacity_points,
+        measurement_mode=args.measurement_mode,
         progress=True,
     )
     return 0
@@ -202,6 +215,7 @@ def cmd_run_all(args: argparse.Namespace) -> int:
         cfg,
         Path(args.out),
         policies=args.policies,
+        measurement_mode=args.measurement_mode,
         progress=True,
     )
     return 0
